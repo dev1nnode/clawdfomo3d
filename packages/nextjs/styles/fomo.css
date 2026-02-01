@@ -1,0 +1,497 @@
+/* ============================================
+   ClawdFomo3D — Retro Arcade / GameBoy Color
+   Warm darks, bouncy buttons, CRT scanlines
+   ============================================ */
+
+/* === Color Palette === */
+:root {
+  --fomo-bg: #12131f;
+  --fomo-bg-card: #1a1c2e;
+  --fomo-bg-card-inner: #222440;
+  --fomo-border: #2e3154;
+  --fomo-text: #e4e4f0;
+  --fomo-text-dim: #8888aa;
+  --fomo-accent-orange: #ff9f43;
+  --fomo-accent-purple: #a855f7;
+  --fomo-accent-green: #00ff88;
+  --fomo-accent-red: #ff6b6b;
+  --fomo-accent-gold: #ffd700;
+  --fomo-accent-cyan: #00d4ff;
+  --fomo-glow-green: 0 0 30px rgba(0, 255, 136, 0.3);
+  --fomo-glow-orange: 0 0 20px rgba(255, 159, 67, 0.3);
+  --fomo-glow-red: 0 0 30px rgba(255, 107, 107, 0.4);
+}
+
+/* === Page Container === */
+.fomo-page {
+  position: relative;
+  min-height: 100vh;
+  background: var(--fomo-bg);
+  background-image:
+    radial-gradient(ellipse at 20% 0%, rgba(168, 85, 247, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 100%, rgba(255, 159, 67, 0.06) 0%, transparent 50%);
+  color: var(--fomo-text);
+  overflow-x: hidden;
+}
+
+.fomo-container {
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 1rem 1rem 3rem;
+  position: relative;
+  z-index: 1;
+}
+
+/* === CRT Scanlines === */
+.crt-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 100;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.03) 0px,
+    rgba(0, 0, 0, 0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* === Title Section === */
+.fomo-title-section {
+  text-align: center;
+  padding: 1.5rem 0 0.5rem;
+}
+
+.fomo-title {
+  font-size: 2.5rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  background: linear-gradient(135deg, var(--fomo-accent-orange), var(--fomo-accent-gold), var(--fomo-accent-orange));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+  margin-bottom: 0.25rem;
+  line-height: 1.2;
+}
+
+.fomo-emoji {
+  -webkit-text-fill-color: initial;
+}
+
+.fomo-subtitle {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--fomo-text-dim);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+/* === Card Base === */
+.fomo-card {
+  background: var(--fomo-bg-card);
+  border: 1px solid var(--fomo-border);
+  border-radius: 1.5rem;
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  transition: box-shadow 0.3s ease;
+}
+
+.fomo-card:hover {
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+}
+
+/* === How To Play === */
+.fomo-howto {
+  background: linear-gradient(135deg, var(--fomo-bg-card), rgba(168, 85, 247, 0.06));
+  border-color: rgba(168, 85, 247, 0.2);
+}
+
+.fomo-howto-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.fomo-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.fomo-step-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+  margin-top: -2px;
+}
+
+.fomo-step strong {
+  color: var(--fomo-accent-orange);
+}
+
+.fomo-step-desc {
+  color: var(--fomo-text-dim);
+}
+
+.fomo-step-bonus {
+  font-size: 0.85rem;
+  color: var(--fomo-accent-green);
+  opacity: 0.8;
+}
+
+/* === Game Card === */
+.fomo-game-card {
+  text-align: center;
+  padding: 1.5rem;
+}
+
+.fomo-round-badge {
+  display: inline-block;
+  background: var(--fomo-bg-card-inner);
+  border: 1px solid var(--fomo-border);
+  border-radius: 999px;
+  padding: 0.25rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--fomo-text-dim);
+  margin-bottom: 0.75rem;
+}
+
+/* === Timer === */
+.fomo-timer {
+  font-family: "Courier New", "Monaco", monospace;
+  font-size: 3.5rem;
+  font-weight: 900;
+  color: var(--fomo-accent-green);
+  text-shadow: var(--fomo-glow-green);
+  letter-spacing: 0.1em;
+  margin-bottom: 1rem;
+  line-height: 1;
+}
+
+.fomo-timer-ended {
+  color: var(--fomo-accent-red);
+  text-shadow: var(--fomo-glow-red);
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+/* === Pot Section === */
+.fomo-pot-section {
+  background: var(--fomo-bg-card-inner);
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: 1.25rem;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1.25rem;
+  display: inline-block;
+}
+
+.fomo-pot-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--fomo-text-dim);
+  margin-bottom: 0.25rem;
+}
+
+.fomo-pot-value {
+  font-size: 1.8rem;
+  font-weight: 900;
+  color: var(--fomo-accent-gold);
+  text-shadow: 0 0 20px rgba(255, 215, 0, 0.2);
+}
+
+/* === Stats Grid === */
+.fomo-stats-grid,
+.fomo-player-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.fomo-stat-box {
+  background: var(--fomo-bg-card-inner);
+  border: 1px solid var(--fomo-border);
+  border-radius: 1rem;
+  padding: 0.75rem;
+  text-align: center;
+}
+
+.fomo-stat-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--fomo-text-dim);
+  margin-bottom: 0.25rem;
+}
+
+.fomo-stat-value {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--fomo-text);
+}
+
+.fomo-burn-value {
+  color: var(--fomo-accent-red);
+}
+
+.fomo-king-value {
+  color: var(--fomo-accent-gold);
+  font-size: 0.85rem;
+}
+
+/* === Prize Banner === */
+.fomo-prize-banner {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 159, 67, 0.1));
+  border: 1px solid rgba(255, 215, 0, 0.2);
+  border-radius: 1.25rem;
+  padding: 0.75rem 1rem;
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--fomo-accent-gold);
+  margin-bottom: 1rem;
+}
+
+/* === Action Card === */
+.fomo-action-card {
+  background: linear-gradient(135deg, var(--fomo-bg-card), rgba(255, 159, 67, 0.05));
+  border-color: rgba(255, 159, 67, 0.2);
+}
+
+.fomo-buy-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.fomo-key-input {
+  flex: 1;
+  background: var(--fomo-bg-card-inner);
+  border: 1px solid var(--fomo-border);
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+  color: var(--fomo-text);
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.2s;
+  -moz-appearance: textfield;
+}
+
+.fomo-key-input::-webkit-outer-spin-button,
+.fomo-key-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.fomo-key-input:focus {
+  border-color: var(--fomo-accent-orange);
+}
+
+/* === THE BIG BUTTON === */
+.fomo-buy-btn {
+  background: linear-gradient(135deg, var(--fomo-accent-orange), #ff7b00);
+  color: #1a1c2e;
+  border: none;
+  border-radius: 1rem;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 4px 15px rgba(255, 159, 67, 0.3);
+  white-space: nowrap;
+}
+
+.fomo-buy-btn:hover:not(:disabled) {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 6px 25px rgba(255, 159, 67, 0.5);
+}
+
+.fomo-buy-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.fomo-buy-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fomo-cost-line {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--fomo-text-dim);
+  margin-bottom: 0.75rem;
+}
+
+.fomo-cost-note {
+  color: var(--fomo-accent-red);
+  font-size: 0.8rem;
+}
+
+.fomo-approve-btn {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--fomo-accent-purple);
+  border-radius: 1rem;
+  padding: 0.6rem 1rem;
+  color: var(--fomo-accent-purple);
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fomo-approve-btn:hover:not(:disabled) {
+  background: rgba(168, 85, 247, 0.1);
+}
+
+.fomo-approve-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fomo-end-btn {
+  width: 100%;
+  background: linear-gradient(135deg, var(--fomo-accent-red), #cc3333);
+  color: white;
+  border: none;
+  border-radius: 1rem;
+  padding: 1rem;
+  font-size: 1.1rem;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.fomo-end-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 25px rgba(255, 107, 107, 0.5);
+}
+
+/* === Player Card === */
+.fomo-player-card {
+  border-color: rgba(0, 255, 136, 0.15);
+}
+
+.fomo-section-title {
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  color: var(--fomo-text-dim);
+  margin-bottom: 1rem;
+}
+
+.fomo-accent-green {
+  color: var(--fomo-accent-green) !important;
+}
+
+.fomo-accent-orange {
+  color: var(--fomo-accent-orange) !important;
+}
+
+.fomo-claim-btn {
+  width: 100%;
+  margin-top: 0.75rem;
+  background: linear-gradient(135deg, var(--fomo-accent-green), #00cc66);
+  color: #1a1c2e;
+  border: none;
+  border-radius: 1rem;
+  padding: 0.75rem;
+  font-size: 1rem;
+  font-weight: 900;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px rgba(0, 255, 136, 0.2);
+}
+
+.fomo-claim-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 25px rgba(0, 255, 136, 0.4);
+}
+
+/* === Rules Card === */
+.fomo-rules-card {
+  background: linear-gradient(135deg, var(--fomo-bg-card), rgba(0, 212, 255, 0.03));
+}
+
+.fomo-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.fomo-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--fomo-text-dim);
+}
+
+.fomo-rule-emoji {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.fomo-rule strong {
+  color: var(--fomo-text);
+}
+
+/* === Loading / Error === */
+.fomo-loading {
+  text-align: center;
+  padding: 2rem;
+  color: var(--fomo-text-dim);
+}
+
+.fomo-error {
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: 1rem;
+  padding: 0.75rem 1rem;
+  text-align: center;
+  color: var(--fomo-accent-red);
+  font-size: 0.85rem;
+  margin-top: 1rem;
+}
+
+/* === Responsive === */
+@media (max-width: 480px) {
+  .fomo-title {
+    font-size: 1.8rem;
+  }
+
+  .fomo-timer {
+    font-size: 2.5rem;
+  }
+
+  .fomo-pot-value {
+    font-size: 1.4rem;
+  }
+
+  .fomo-buy-row {
+    flex-direction: column;
+  }
+
+  .fomo-buy-btn {
+    width: 100%;
+  }
+}

@@ -1,320 +1,274 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { NextPage } from "next";
-import { formatUnits } from "viem";
 import { erc20Abi } from "viem";
 import { useAccount } from "wagmi";
 import { useWriteContract } from "wagmi";
-import { useDeployedContractInfo, useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
+import { useDeployedContractInfo, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
+import { GameState, formatClawd, formatTimer, shortAddr, useGameState } from "~~/hooks/useGameState";
 
-// $CLAWD token on Base
 const CLAWD_TOKEN = "0x9f86dB9fc6f7c9408e8Fda3Ff8ce4e78ac7a6b07" as const;
 
 const Home: NextPage = () => {
   const { address: connectedAddress } = useAccount();
   const [numKeys, setNumKeys] = useState<string>("1");
-  const [timeLeft, setTimeLeft] = useState<string>("--:--");
   const [isApproving, setIsApproving] = useState(false);
   const [isBuying, setIsBuying] = useState(false);
 
-  // Get the deployed ClawdFomo3D contract address
   const { data: fomo3dContract } = useDeployedContractInfo("ClawdFomo3D");
 
-  // ============ Read Contract State ============
-  const { data: currentRound } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "currentRound",
-  });
-
-  const { data: pot } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "pot",
-  });
-
-  const { data: totalKeys } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "totalKeys",
-  });
-
-  const { data: lastBuyer } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "lastBuyer",
-  });
-
-  const { data: currentKeyPrice } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "currentKeyPrice",
-  });
-
-  const { data: timeRemaining } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "timeRemaining",
-  });
-
-  const { data: totalBurned } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "totalBurned",
-  });
-
-  const { data: costForKeys } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "getCostForKeys",
-    args: [BigInt(numKeys || "1")],
-  });
-
-  const { data: playerKeys } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "getPlayerKeys",
-    args: [currentRound, connectedAddress],
-  });
-
-  const { data: playerDividends } = useScaffoldReadContract({
-    contractName: "ClawdFomo3D",
-    functionName: "dividendsOf",
-    args: [currentRound, connectedAddress],
-  });
+  // ============ SINGLE polling hook — one multicall every 3s ============
+  const game: GameState = useGameState(numKeys);
 
   // ============ Write Functions ============
-  const { writeContractAsync: writeBuyKeys } = useScaffoldWriteContract({
-    contractName: "ClawdFomo3D",
-  });
-
-  const { writeContractAsync: writeEndRound } = useScaffoldWriteContract({
-    contractName: "ClawdFomo3D",
-  });
-
-  const { writeContractAsync: writeClaim } = useScaffoldWriteContract({
-    contractName: "ClawdFomo3D",
-  });
-
-  // ERC20 approve via wagmi directly
+  const { writeContractAsync: writeBuyKeys } = useScaffoldWriteContract({ contractName: "ClawdFomo3D" });
+  const { writeContractAsync: writeEndRound } = useScaffoldWriteContract({ contractName: "ClawdFomo3D" });
+  const { writeContractAsync: writeClaim } = useScaffoldWriteContract({ contractName: "ClawdFomo3D" });
   const { writeContractAsync: writeApprove } = useWriteContract();
 
-  // ============ Timer Countdown (real-time) ============
-  useEffect(() => {
-    if (timeRemaining === undefined) {
-      setTimeLeft("--:--");
-      return;
-    }
-    let seconds = Number(timeRemaining);
-    const formatTime = (s: number) => {
-      if (s <= 0) return "00:00";
-      const mins = Math.floor(s / 60);
-      const secs = s % 60;
-      return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-    };
-    setTimeLeft(formatTime(seconds));
-    const interval = setInterval(() => {
-      seconds--;
-      if (seconds <= 0) {
-        setTimeLeft("00:00");
-        clearInterval(interval);
-      } else {
-        setTimeLeft(formatTime(seconds));
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [timeRemaining]);
-
-  // ============ Helpers ============
-  const formatClawd = (val: bigint | undefined) => {
-    if (!val) return "0";
-    const num = Number(formatUnits(val, 18));
-    if (num > 1_000_000) return (num / 1_000_000).toFixed(2) + "M";
-    if (num > 1_000) return (num / 1_000).toFixed(2) + "K";
-    return num.toFixed(0);
-  };
-
-  const shortAddr = (addr: string | undefined) => {
-    if (!addr || addr === "0x0000000000000000000000000000000000000000") return "Nobody";
-    return addr.slice(0, 6) + "..." + addr.slice(-4);
-  };
-
-  const isRoundOver = timeRemaining !== undefined && timeRemaining === 0n;
+  const isRoundOver = !game.isActive || game.timeRemaining <= 0;
   const fomo3dAddress = fomo3dContract?.address;
 
   return (
-    <div className="flex flex-col items-center min-h-screen pt-8 px-4">
-      {/* Title */}
-      <div className="text-center mb-8">
-        <h1 className="text-5xl font-bold mb-2">🔥 ClawdFomo3D</h1>
-        <p className="text-lg opacity-70">Last buyer wins. $CLAWD burns every round.</p>
-      </div>
+    <div className="fomo-page">
+      {/* CRT Scanline Overlay */}
+      <div className="crt-overlay" />
 
-      {/* Main Game Card */}
-      <div className="bg-base-200 rounded-3xl p-8 w-full max-w-lg shadow-xl mb-6">
-        {/* Round Info */}
-        <div className="text-center mb-6">
-          <div className="text-sm opacity-60 mb-1">ROUND {currentRound?.toString() || "1"}</div>
+      <div className="fomo-container">
+        {/* ============ TITLE ============ */}
+        <div className="fomo-title-section">
+          <h1 className="fomo-title">
+            <span className="fomo-emoji">🔥</span> CLAWDFOMO3D <span className="fomo-emoji">🔥</span>
+          </h1>
+          <p className="fomo-subtitle">LAST BUYER WINS EVERYTHING.</p>
+        </div>
+
+        {/* ============ HOW TO PLAY ============ */}
+        <div className="fomo-card fomo-howto">
+          <div className="fomo-howto-steps">
+            <div className="fomo-step">
+              <span className="fomo-step-icon">🔑</span>
+              <div>
+                <strong>BUY A KEY</strong>
+                <span className="fomo-step-desc">
+                  {" "}
+                  — Adds time to the clock. Makes YOU the King.
+                  <br />
+                  <span className="fomo-step-bonus">(Bonus: Earn dividends from every buy after yours!)</span>
+                </span>
+              </div>
+            </div>
+            <div className="fomo-step">
+              <span className="fomo-step-icon">👑</span>
+              <div>
+                <strong>HOLD THE THRONE</strong>
+                <span className="fomo-step-desc">
+                  {" "}
+                  — If the timer hits 00:00:00 while you are King…{" "}
+                  <strong className="fomo-accent-green">YOU WIN THE POT.</strong> 💰
+                </span>
+              </div>
+            </div>
+            <div className="fomo-step">
+              <span className="fomo-step-icon">🔥</span>
+              <div>
+                <strong>BURN IT ALL</strong>
+                <span className="fomo-step-desc"> — Every buy burns $CLAWD. Number go up.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ============ GAME STATE ============ */}
+        <div className="fomo-card fomo-game-card">
+          {/* Round Badge */}
+          <div className="fomo-round-badge">ROUND {game.currentRound.toString()}</div>
 
           {/* Timer */}
-          <div
-            className={`text-6xl font-mono font-bold mb-4 ${isRoundOver ? "text-error animate-pulse" : "text-primary"}`}
-          >
-            {isRoundOver ? "ENDED" : timeLeft}
+          <div className={`fomo-timer ${isRoundOver ? "fomo-timer-ended" : ""}`}>
+            {isRoundOver ? "💀 ENDED" : formatTimer(game.timeRemaining)}
           </div>
 
-          {/* Pot */}
-          <div className="stat bg-base-100 rounded-2xl px-6 py-4 inline-block">
-            <div className="stat-title">💰 POT</div>
-            <div className="stat-value text-secondary">{formatClawd(pot)} $CLAWD</div>
+          {/* Pot — THE BIG NUMBER */}
+          <div className="fomo-pot-section">
+            <div className="fomo-pot-label">💰 THE POT</div>
+            <div className="fomo-pot-value">{formatClawd(game.pot)} $CLAWD</div>
+          </div>
+
+          {/* Stats Grid */}
+          <div className="fomo-stats-grid">
+            <div className="fomo-stat-box">
+              <div className="fomo-stat-label">KEY PRICE</div>
+              <div className="fomo-stat-value">{formatClawd(game.currentKeyPrice)}</div>
+            </div>
+            <div className="fomo-stat-box">
+              <div className="fomo-stat-label">KEYS SOLD</div>
+              <div className="fomo-stat-value">{game.totalKeys.toString()}</div>
+            </div>
+            <div className="fomo-stat-box">
+              <div className="fomo-stat-label">🔥 BURNED</div>
+              <div className="fomo-stat-value fomo-burn-value">{formatClawd(game.totalBurned)}</div>
+            </div>
+            <div className="fomo-stat-box">
+              <div className="fomo-stat-label">👑 KING</div>
+              <div className="fomo-stat-value fomo-king-value">{shortAddr(game.lastBuyer)}</div>
+            </div>
           </div>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <div className="bg-base-100 rounded-xl p-3 text-center">
-            <div className="text-xs opacity-60">KEY PRICE</div>
-            <div className="font-bold">{formatClawd(currentKeyPrice)}</div>
+        {/* ============ PRIZE BANNER ============ */}
+        {game.lastBuyer !== "0x0000000000000000000000000000000000000000" && !isRoundOver && (
+          <div className="fomo-prize-banner">
+            👑 {shortAddr(game.lastBuyer)} wins <strong>{formatClawd((game.pot * 50n) / 100n)} $CLAWD</strong> if nobody
+            buys a key!
           </div>
-          <div className="bg-base-100 rounded-xl p-3 text-center">
-            <div className="text-xs opacity-60">TOTAL KEYS</div>
-            <div className="font-bold">{totalKeys?.toString() || "0"}</div>
-          </div>
-          <div className="bg-base-100 rounded-xl p-3 text-center">
-            <div className="text-xs opacity-60">🔥 TOTAL BURNED</div>
-            <div className="font-bold text-error">{formatClawd(totalBurned)}</div>
-          </div>
-          <div className="bg-base-100 rounded-xl p-3 text-center">
-            <div className="text-xs opacity-60">👑 LAST BUYER</div>
-            <div className="font-bold text-xs">{shortAddr(lastBuyer)}</div>
-          </div>
-        </div>
-
-        {/* Buy Keys */}
-        {!isRoundOver ? (
-          <div className="mb-4">
-            <div className="flex gap-2 mb-2">
-              <input
-                type="number"
-                min="1"
-                value={numKeys}
-                onChange={e => setNumKeys(e.target.value)}
-                className="input input-bordered flex-1"
-                placeholder="# keys"
-              />
-              <button
-                className="btn btn-primary btn-lg"
-                disabled={isBuying || !connectedAddress}
-                onClick={async () => {
-                  if (!costForKeys || !connectedAddress) return;
-                  setIsBuying(true);
-                  try {
-                    await writeBuyKeys({
-                      functionName: "buyKeys",
-                      args: [BigInt(numKeys || "1")],
-                    });
-                  } catch (e) {
-                    console.error("Buy failed:", e);
-                  }
-                  setIsBuying(false);
-                }}
-              >
-                {isBuying ? "⏳" : "🎰 BUY"}
-              </button>
-            </div>
-            <div className="text-sm opacity-60 text-center mb-2">
-              Cost: {formatClawd(costForKeys)} $CLAWD (incl. 10% burn)
-            </div>
-            {fomo3dAddress && (
-              <button
-                className="btn btn-outline btn-sm w-full mt-1"
-                disabled={isApproving || !costForKeys || !connectedAddress}
-                onClick={async () => {
-                  if (!costForKeys || !fomo3dAddress) return;
-                  setIsApproving(true);
-                  try {
-                    // Approve a generous amount so users don't re-approve each time
-                    const approveAmount = costForKeys * 100n;
-                    await writeApprove({
-                      address: CLAWD_TOKEN,
-                      abi: erc20Abi,
-                      functionName: "approve",
-                      args: [fomo3dAddress, approveAmount],
-                    });
-                  } catch (e) {
-                    console.error("Approve failed:", e);
-                  }
-                  setIsApproving(false);
-                }}
-              >
-                {isApproving ? "Approving..." : "✅ Approve $CLAWD (do this first!)"}
-              </button>
-            )}
-          </div>
-        ) : (
-          <button
-            className="btn btn-error btn-lg w-full mb-4"
-            onClick={async () => {
-              try {
-                await writeEndRound({
-                  functionName: "endRound",
-                });
-              } catch (e) {
-                console.error("End round failed:", e);
-              }
-            }}
-          >
-            🏆 END ROUND & CROWN WINNER
-          </button>
         )}
-      </div>
 
-      {/* Player Stats */}
-      {connectedAddress && (
-        <div className="bg-base-200 rounded-3xl p-6 w-full max-w-lg shadow-xl mb-6">
-          <h2 className="text-xl font-bold mb-4 text-center">Your Stats</h2>
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="bg-base-100 rounded-xl p-3 text-center">
-              <div className="text-xs opacity-60">YOUR KEYS</div>
-              <div className="font-bold text-lg">{playerKeys?.toString() || "0"}</div>
-            </div>
-            <div className="bg-base-100 rounded-xl p-3 text-center">
-              <div className="text-xs opacity-60">DIVIDENDS</div>
-              <div className="font-bold text-lg">{formatClawd(playerDividends)}</div>
-            </div>
-          </div>
-          {playerDividends && playerDividends > 0n && (
+        {/* ============ BUY / END ROUND ============ */}
+        <div className="fomo-card fomo-action-card">
+          {!isRoundOver ? (
+            <>
+              <div className="fomo-buy-row">
+                <input
+                  type="number"
+                  min="1"
+                  value={numKeys}
+                  onChange={e => setNumKeys(e.target.value)}
+                  className="fomo-key-input"
+                  placeholder="# keys"
+                />
+                <button
+                  className="fomo-buy-btn"
+                  disabled={isBuying || !connectedAddress}
+                  onClick={async () => {
+                    if (!game.costForKeys || !connectedAddress) return;
+                    setIsBuying(true);
+                    try {
+                      await writeBuyKeys({
+                        functionName: "buyKeys",
+                        args: [BigInt(numKeys || "1")],
+                      });
+                    } catch (e) {
+                      console.error("Buy failed:", e);
+                    }
+                    setIsBuying(false);
+                  }}
+                >
+                  {isBuying ? "⏳ BUYING..." : "👑 SNATCH THE CROWN"}
+                </button>
+              </div>
+              <div className="fomo-cost-line">
+                Cost: <strong>{formatClawd(game.costForKeys)} $CLAWD</strong>{" "}
+                <span className="fomo-cost-note">(incl. 10% burn 🔥)</span>
+              </div>
+              {fomo3dAddress && (
+                <button
+                  className="fomo-approve-btn"
+                  disabled={isApproving || !game.costForKeys || !connectedAddress}
+                  onClick={async () => {
+                    if (!game.costForKeys || !fomo3dAddress) return;
+                    setIsApproving(true);
+                    try {
+                      const approveAmount = game.costForKeys * 100n;
+                      await writeApprove({
+                        address: CLAWD_TOKEN,
+                        abi: erc20Abi,
+                        functionName: "approve",
+                        args: [fomo3dAddress, approveAmount],
+                      });
+                    } catch (e) {
+                      console.error("Approve failed:", e);
+                    }
+                    setIsApproving(false);
+                  }}
+                >
+                  {isApproving ? "⏳ Approving..." : "✅ Approve $CLAWD (do this first!)"}
+                </button>
+              )}
+            </>
+          ) : (
             <button
-              className="btn btn-success w-full"
+              className="fomo-end-btn"
               onClick={async () => {
                 try {
-                  await writeClaim({
-                    functionName: "claimDividends",
-                    args: [currentRound],
-                  });
+                  await writeEndRound({ functionName: "endRound" });
                 } catch (e) {
-                  console.error("Claim failed:", e);
+                  console.error("End round failed:", e);
                 }
               }}
             >
-              💰 Claim {formatClawd(playerDividends)} $CLAWD
+              🏆 END ROUND & CROWN THE WINNER
             </button>
           )}
         </div>
-      )}
 
-      {/* How It Works */}
-      <div className="bg-base-200 rounded-3xl p-6 w-full max-w-lg shadow-xl mb-8">
-        <h2 className="text-xl font-bold mb-3 text-center">How It Works</h2>
-        <div className="space-y-2 text-sm">
-          <p>
-            🎰 <strong>Buy keys</strong> with $CLAWD. Each buy resets the timer.
-          </p>
-          <p>
-            👑 <strong>Last buyer</strong> when timer hits zero wins 40% of the pot.
-          </p>
-          <p>
-            🔥 <strong>10% burned</strong> on every buy + <strong>30% burned</strong> at round end.
-          </p>
-          <p>
-            💰 <strong>25% of pot</strong> distributed to all key holders as dividends.
-          </p>
-          <p>
-            ⚡ <strong>Anti-snipe:</strong> Buys in last 2 min only extend timer by 2 min.
-          </p>
+        {/* ============ YOUR STATS ============ */}
+        {connectedAddress && (
+          <div className="fomo-card fomo-player-card">
+            <h2 className="fomo-section-title">YOUR STATS</h2>
+            <div className="fomo-player-grid">
+              <div className="fomo-stat-box">
+                <div className="fomo-stat-label">YOUR KEYS</div>
+                <div className="fomo-stat-value fomo-accent-green">{game.playerKeys.toString()}</div>
+              </div>
+              <div className="fomo-stat-box">
+                <div className="fomo-stat-label">DIVIDENDS</div>
+                <div className="fomo-stat-value fomo-accent-orange">{formatClawd(game.playerDividends)}</div>
+              </div>
+            </div>
+            {game.playerDividends > 0n && (
+              <button
+                className="fomo-claim-btn"
+                onClick={async () => {
+                  try {
+                    await writeClaim({
+                      functionName: "claimDividends",
+                      args: [game.currentRound],
+                    });
+                  } catch (e) {
+                    console.error("Claim failed:", e);
+                  }
+                }}
+              >
+                💰 Claim {formatClawd(game.playerDividends)} $CLAWD
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ============ RULES ============ */}
+        <div className="fomo-card fomo-rules-card">
+          <h2 className="fomo-section-title">THE RULES</h2>
+          <div className="fomo-rules-list">
+            <div className="fomo-rule">
+              <span className="fomo-rule-emoji">🔥</span> 10% of every buy is <strong>burned forever</strong>
+            </div>
+            <div className="fomo-rule">
+              <span className="fomo-rule-emoji">👑</span> Winner takes <strong>50%</strong> of the pot
+            </div>
+            <div className="fomo-rule">
+              <span className="fomo-rule-emoji">💰</span> Key holders split <strong>25%</strong> as dividends
+            </div>
+            <div className="fomo-rule">
+              <span className="fomo-rule-emoji">🔥</span> Another <strong>20%</strong> burned at round end
+            </div>
+            <div className="fomo-rule">
+              <span className="fomo-rule-emoji">⚡</span> Anti-snipe: Buys in last 2 min only add 2 min
+            </div>
+          </div>
         </div>
+
+        {/* Loading State */}
+        {game.isLoading && (
+          <div className="fomo-loading">
+            <span className="loading loading-spinner loading-lg"></span>
+            <p>Connecting to Base...</p>
+          </div>
+        )}
+
+        {/* Error State */}
+        {game.error && <div className="fomo-error">⚠️ {game.error}</div>}
       </div>
     </div>
   );
