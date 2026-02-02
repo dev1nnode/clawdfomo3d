@@ -4,13 +4,25 @@ pragma solidity ^0.8.20;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /**
  * @title ClawdFomo3D
  * @notice King-of-the-hill game with $CLAWD. Last buyer wins when timer expires.
  *         Burns $CLAWD on every buy and at round end for deflationary pressure.
+ * @dev Security improvements:
+ *      - Added Pausable for emergency stop
+ *      - Added Ownable for admin controls
+ *      - Added MAX_KEYS_PER_BUY to prevent gas exhaustion
+ *      - Added timer duration validation
+ *      - Added overflow protection in pricing
+ *      - Added getRoundInfo() and getPlayer() for frontend efficiency
+ *      - Added dev fee tracking and events
+ *      - Added stuck token recovery
+ *      - Converted require strings to custom errors (gas savings)
  */
-contract ClawdFomo3D is ReentrancyGuard {
+contract ClawdFomo3D is ReentrancyGuard, Ownable, Pausable {
     using SafeERC20 for IERC20;
 
     // ============ Constants ============
@@ -27,6 +39,11 @@ contract ClawdFomo3D is ReentrancyGuard {
     // Key pricing: starts at BASE_PRICE, increases by INCREMENT per key sold
     uint256 public constant BASE_PRICE = 1000 * 1e18;      // 1000 CLAWD base
     uint256 public constant PRICE_INCREMENT = 10 * 1e18;    // +10 CLAWD per key sold
+    
+    // Safety limits
+    uint256 public constant MAX_KEYS_PER_BUY = 1000;        // Prevent gas exhaustion attacks
+    uint256 public constant MIN_TIMER_DURATION = 5 minutes; // Minimum round time
+    uint256 public constant MAX_TIMER_DURATION = 7 days;    // Maximum round time
 
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
@@ -42,6 +59,7 @@ contract ClawdFomo3D is ReentrancyGuard {
     uint256 public totalKeys;
     address public lastBuyer;
     uint256 public totalBurned;
+    uint256 public totalDevFees;  // NEW: Track cumulative dev fees
 
     // Dividend tracking (points-per-share)
     uint256 public pointsPerKey;
@@ -64,15 +82,42 @@ contract ClawdFomo3D is ReentrancyGuard {
         uint256 burned;
         uint256 endTime;
     }
+    
+    // NEW: Struct for frontend optimization
+    struct RoundInfo {
+        uint256 currentRound;
+        uint256 pot;
+        uint256 roundEnd;
+        address lastBuyer;
+        uint256 totalKeys;
+        uint256 currentKeyPrice;
+        bool isActive;
+        uint256 totalBurned;
+    }
 
     // ============ Events ============
     event KeysPurchased(uint256 indexed round, address indexed buyer, uint256 keys, uint256 cost, uint256 burned);
     event RoundEnded(uint256 indexed round, address indexed winner, uint256 payout, uint256 burned);
     event DividendsClaimed(uint256 indexed round, address indexed player, uint256 amount);
     event RoundStarted(uint256 indexed round, uint256 endTime);
+    event DevFeePaid(uint256 indexed round, uint256 amount);  // NEW: Track dev fee payments
+    event TokensRecovered(address indexed token, uint256 amount);  // NEW: Track token recovery
+
+    // ============ Custom Errors (gas savings vs require strings) ============
+    error InvalidTimerDuration();
+    error RoundNotOver();
+    error RoundAlreadyEnded();
+    error NoKeysBought();
+    error NoDividendsOwed();
+    error MaxKeysExceeded();
+    error ZeroAddress();
+    error OverflowRisk();
 
     // ============ Constructor ============
-    constructor(address _clawd, uint256 _timerDuration, address _dev) {
+    constructor(address _clawd, uint256 _timerDuration, address _dev) Ownable(msg.sender) {
+        if (_clawd == address(0) || _dev == address(0)) revert ZeroAddress();
+        if (_timerDuration < MIN_TIMER_DURATION || _timerDuration > MAX_TIMER_DURATION) revert InvalidTimerDuration();
+        
         clawd = IERC20(_clawd);
         timerDuration = _timerDuration;
         dev = _dev;
@@ -86,14 +131,18 @@ contract ClawdFomo3D is ReentrancyGuard {
 
     /**
      * @notice Buy keys with $CLAWD. Requires prior approval.
-     * @param numKeys Number of keys to buy (1+)
+     * @param numKeys Number of keys to buy (1 - MAX_KEYS_PER_BUY)
      */
-    function buyKeys(uint256 numKeys) external nonReentrant {
-        require(numKeys > 0, "Buy at least 1 key");
-        require(block.timestamp < roundEnd, "Round ended, call endRound()");
+    function buyKeys(uint256 numKeys) external nonReentrant whenNotPaused {
+        if (numKeys == 0) revert NoKeysBought();
+        if (numKeys > MAX_KEYS_PER_BUY) revert MaxKeysExceeded();
+        if (block.timestamp >= roundEnd) revert RoundAlreadyEnded();
+        
+        // Check for overflow risk
+        if (totalKeys + numKeys > type(uint256).max / PRICE_INCREMENT) revert OverflowRisk();
 
         uint256 cost = getCostForKeys(numKeys);
-        require(cost > 0, "Cost must be > 0");
+        if (cost == 0) revert NoKeysBought();
 
         // Transfer CLAWD from buyer
         clawd.safeTransferFrom(msg.sender, address(this), cost);
@@ -103,16 +152,18 @@ contract ClawdFomo3D is ReentrancyGuard {
         uint256 toPot = cost - burnAmount;
 
         clawd.safeTransfer(DEAD, burnAmount);
-        totalBurned += burnAmount;
+        unchecked { totalBurned += burnAmount; }
 
         // Add to pot
         pot += toPot;
 
         // Update player keys
         Player storage p = players[currentRound][msg.sender];
-        p.keys += numKeys;
-        p.pointsCorrection -= int256(pointsPerKey * numKeys);
-        totalKeys += numKeys;
+        unchecked { 
+            p.keys += numKeys;
+            p.pointsCorrection -= int256(pointsPerKey * numKeys);
+            totalKeys += numKeys;
+        }
 
         // Update last buyer and timer
         lastBuyer = msg.sender;
@@ -131,9 +182,9 @@ contract ClawdFomo3D is ReentrancyGuard {
     /**
      * @notice End the round and distribute the pot. Anyone can call.
      */
-    function endRound() external nonReentrant {
-        require(block.timestamp >= roundEnd, "Round not over yet");
-        require(lastBuyer != address(0), "No one played");
+    function endRound() external nonReentrant whenNotPaused {
+        if (block.timestamp < roundEnd) revert RoundNotOver();
+        if (lastBuyer == address(0)) revert NoKeysBought();
 
         uint256 potSize = pot;
         pot = 0;
@@ -142,14 +193,14 @@ contract ClawdFomo3D is ReentrancyGuard {
         uint256 winnerPayout = (potSize * WINNER_BPS) / BPS;
         uint256 burnPayout = (potSize * BURN_ON_END_BPS) / BPS;
         uint256 dividendPayout = (potSize * DIVIDENDS_BPS) / BPS;
-        uint256 devPayout = potSize - winnerPayout - burnPayout - dividendPayout; // remainder to dev
+        uint256 devPayout = potSize - winnerPayout - burnPayout - dividendPayout;
 
         // Pay winner
         clawd.safeTransfer(lastBuyer, winnerPayout);
 
         // Burn
         clawd.safeTransfer(DEAD, burnPayout);
-        totalBurned += burnPayout;
+        unchecked { totalBurned += burnPayout; }
 
         // Distribute dividends via points-per-key
         if (totalKeys > 0) {
@@ -158,6 +209,8 @@ contract ClawdFomo3D is ReentrancyGuard {
 
         // Dev fee
         clawd.safeTransfer(dev, devPayout);
+        unchecked { totalDevFees += devPayout; }
+        emit DevFeePaid(currentRound, devPayout);
 
         // Snapshot pointsPerKey for this round so dividends can be claimed later
         roundPointsPerKey[currentRound] = pointsPerKey;
@@ -174,7 +227,7 @@ contract ClawdFomo3D is ReentrancyGuard {
         emit RoundEnded(currentRound, lastBuyer, winnerPayout, burnPayout);
 
         // Start new round
-        currentRound++;
+        unchecked { currentRound++; }
         roundStart = block.timestamp;
         roundEnd = block.timestamp + timerDuration;
         totalKeys = 0;
@@ -189,7 +242,7 @@ contract ClawdFomo3D is ReentrancyGuard {
      */
     function claimDividends(uint256 round) external nonReentrant {
         uint256 owed = _dividendsOf(round, msg.sender);
-        require(owed > 0, "No dividends");
+        if (owed == 0) revert NoDividendsOwed();
 
         Player storage p = players[round][msg.sender];
         p.withdrawnDividends += owed;
@@ -198,15 +251,79 @@ contract ClawdFomo3D is ReentrancyGuard {
         emit DividendsClaimed(round, msg.sender, owed);
     }
 
+    // ============ Admin Functions (Owner Only) ============
+
+    /**
+     * @notice Emergency pause - only owner
+     */
+    function pause() external onlyOwner {
+        _pause();
+    }
+    
+    /**
+     * @notice Unpause - only owner
+     */
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+    
+    /**
+     * @notice Recover stuck tokens (non-CLAWD) - only owner
+     * @param token The token to recover
+     */
+    function recoverStuckTokens(address token) external onlyOwner {
+        if (token == address(clawd)) revert("Cannot recover CLAWD");
+        IERC20 stuckToken = IERC20(token);
+        uint256 balance = stuckToken.balanceOf(address(this));
+        stuckToken.safeTransfer(owner(), balance);
+        emit TokensRecovered(token, balance);
+    }
+
     // ============ Views ============
 
+    /**
+     * @notice Get all round info in one call - frontend optimization
+     */
+    function getRoundInfo() external view returns (RoundInfo memory) {
+        return RoundInfo({
+            currentRound: currentRound,
+            pot: pot,
+            roundEnd: roundEnd,
+            lastBuyer: lastBuyer,
+            totalKeys: totalKeys,
+            currentKeyPrice: BASE_PRICE + (totalKeys * PRICE_INCREMENT),
+            isActive: block.timestamp < roundEnd,
+            totalBurned: totalBurned
+        });
+    }
+    
+    /**
+     * @notice Get player info for a round - frontend optimization
+     */
+    function getPlayer(uint256 round, address player) external view returns (uint256 keys, uint256 dividends, uint256 withdrawn) {
+        Player storage p = players[round][player];
+        keys = p.keys;
+        dividends = _dividendsOf(round, player);
+        withdrawn = p.withdrawnDividends;
+    }
+
     function getCostForKeys(uint256 numKeys) public view returns (uint256) {
+        if (numKeys == 0) return 0;
         // Sum of arithmetic sequence: sum = n * (2*a + (n-1)*d) / 2
-        // where a = BASE_PRICE + totalKeys * PRICE_INCREMENT (current price)
-        // d = PRICE_INCREMENT, n = numKeys
         uint256 startPrice = BASE_PRICE + (totalKeys * PRICE_INCREMENT);
         uint256 endPrice = startPrice + ((numKeys - 1) * PRICE_INCREMENT);
+        
+        // Check for overflow
+        if (endPrice < startPrice) revert OverflowRisk();
+        
         return (numKeys * (startPrice + endPrice)) / 2;
+    }
+    
+    /**
+     * @notice Calculate cost alias for frontend compatibility
+     */
+    function calculateCost(uint256 numKeys) external view returns (uint256) {
+        return getCostForKeys(numKeys);
     }
 
     function currentKeyPrice() external view returns (uint256) {
@@ -224,7 +341,6 @@ contract ClawdFomo3D is ReentrancyGuard {
 
     function _dividendsOf(uint256 round, address player) internal view returns (uint256) {
         Player storage p = players[round][player];
-        // Use snapshot for completed rounds, live value for current round
         uint256 ppk = round < currentRound ? roundPointsPerKey[round] : pointsPerKey;
         int256 accumulated = int256(ppk * p.keys) + p.pointsCorrection;
         if (accumulated < 0) return 0;
