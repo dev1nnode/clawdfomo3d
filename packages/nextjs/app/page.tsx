@@ -42,6 +42,9 @@ const Home: NextPage = () => {
             <span className="fomo-emoji">🔥</span> CLAWDFOMO3D <span className="fomo-emoji">🔥</span>
           </h1>
           <p className="fomo-subtitle">LAST BUYER WINS EVERYTHING.</p>
+          <a href="/history" className="fomo-history-link">
+            📜 View Round History
+          </a>
         </div>
 
         {/* ============ HOW TO PLAY ============ */}
